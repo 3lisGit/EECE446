@@ -1,0 +1,86 @@
+Partner A: Core Infrastructure & JOIN/PUBLISH - Elijah
+
+Main program setup
+
+Command line argument parsing
+Main command loop (reading user input)
+Socket creation and connection to registry
+
+
+JOIN command
+
+Build and send JOIN message (Action=0, Peer ID)
+
+
+PUBLISH command
+
+Directory reading (opendir/readdir or std::filesystem)
+Build PUBLISH message (Action=1, Count, NULL-terminated filenames)
+Send PUBLISH message
+
+
+
+Partner B: SEARCH & Response Handling
+
+SEARCH command (request)
+
+Read filename from user
+Build and send SEARCH message (Action=2, NULL-terminated filename)
+
+
+SEARCH response handling
+
+Receive 10-byte response
+Parse Peer ID, IPv4 address, Port number
+Use inet_ntop() to convert IP address
+Print formatted output or "File not indexed" message
+
+
+EXIT command
+
+Clean socket closure
+
+
+
+Shared/Final Integration:
+
+Makefile creation
+Error checking throughout
+Testing together
+Code cleanup
+
+Important Commands & Functions You'll Need
+Socket Setup:
+csocket()      // Create socket
+getaddrinfo() // Resolve hostname/IP
+connect()     // Connect to registry
+Sending Data:
+csend()        // Send complete message in ONE call
+htonl()       // Convert 4-byte values to network order
+htons()       // Convert 2-byte values to network order
+Receiving Data (SEARCH response):
+crecv()        // Receive response
+ntohl()       // Convert from network to host order
+ntohs()       // Convert from network to host order
+inet_ntop()   // Convert IP address (REQUIRED, not inet_ntoa!)
+File Operations:
+copendir()     // Open directory
+readdir()     // Read directory entries
+// Check d_type == DT_REG for regular files
+Key Protocol Details to Remember
+
+All multi-byte integers must be in network byte order (use htonl(), htons())
+Filenames are NULL-terminated (don't forget the \0!)
+Send entire request in ONE send() call (5 points depend on this)
+Don't use memset() (unless on single byte) - you'll lose points
+Must use inet_ntop() not inet_ntoa() for IP conversion
+
+Testing Note
+You mentioned "When publishing files we do not need to send anything atm unless provided during the testing" - just to clarify: you DO need to implement PUBLISH to send the list of files from your SharedFiles directory. The registry won't send a response back to you, but you still need to send the PUBLISH request with your files listed.
+Pro Tips
+
+Start with JOIN (simplest message)
+Test each command individually before moving on
+Use the -d flag with p2_registry to see debug output
+Create a SharedFiles directory with test files
+Use Wireshark to verify your message formats match exactly
