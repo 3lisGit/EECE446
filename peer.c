@@ -3,120 +3,60 @@
  * Fall 2025
  * 
  * Group Members:
- * - Alexander Liu
- * - Elijah Coleman
- * 
- * Description: P2P peer application that communicates with a registry
- * to JOIN, PUBLISH files, and SEARCH for files.
+ * - [Your Name]
+ * - [Partner's Name]
  */
 
+// ============================================
+// CORRECT #INCLUDES (macOS and Linux)
+// ============================================
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <unistd.h>
 #include <dirent.h>
 
-/* Protocol action codes */
+// ============================================
+// PROTOCOL DEFINITIONS
+// ============================================
 #define ACTION_JOIN    0
 #define ACTION_PUBLISH 1
 #define ACTION_SEARCH  2
 
-/* Buffer sizes */
-#define MAX_FILENAME_LEN 100
-#define MAX_PUBLISH_SIZE 1200
-#define COMMAND_BUFFER_SIZE 256
+#define JOIN_MSG_SIZE     5
+#define SEARCH_RESP_SIZE  10
 
-/* Function prototypes */
+// ============================================
+// FUNCTION PROTOTYPES
+// ============================================
 int connect_to_registry(const char *hostname, const char *port);
-void handle_join(int sockfd, uint32_t peer_id);
-void handle_publish(int sockfd);
-void handle_search(int sockfd);
-void handle_exit(int sockfd);
+int send_join_request(int sockfd, uint32_t peer_id);
+int send_publish_request(int sockfd);
+int send_search_request(int sockfd);
 
-int main(int argc, char *argv[]) {
-    /* Check command line arguments */
-    if (argc != 4) {
-        fprintf(stderr, "Usage: %s <registry_host> <registry_port> <peer_id>\n", argv[0]);
-        exit(EXIT_FAILURE);
-    }
-
-    const char *registry_host = argv[1];
-    const char *registry_port = argv[2];
-    uint32_t peer_id = (uint32_t)atoi(argv[3]);
-
-    /* Connect to registry */
-    int sockfd = connect_to_registry(registry_host, registry_port);
-    if (sockfd < 0) {
-        fprintf(stderr, "Failed to connect to registry\n");
-        exit(EXIT_FAILURE);
-    }
-
-    /* Main command loop */
-    char command[COMMAND_BUFFER_SIZE];
-    while (1) {
-        printf("Enter a command: ");
-        fflush(stdout);
-
-        if (fgets(command, sizeof(command), stdin) == NULL) {
-            break;
-        }
-
-        /* Remove newline */
-        command[strcspn(command, "\n")] = '\0';
-
-        /* Process commands */
-        if (strcmp(command, "JOIN") == 0) {
-            handle_join(sockfd, peer_id);
-        } 
-        else if (strcmp(command, "PUBLISH") == 0) {
-            handle_publish(sockfd);
-        } 
-        else if (strcmp(command, "SEARCH") == 0) {
-            handle_search(sockfd);
-        } 
-        else if (strcmp(command, "EXIT") == 0) {
-            handle_exit(sockfd);
-            break;
-        } 
-        else {
-            fprintf(stderr, "Unknown command: %s\n", command);
-        }
-    }
-
-    return 0;
-}
-
-/**
- * Connect to the registry server
- * Returns socket file descriptor on success, -1 on failure
- */
+// ============================================
+// CONNECT TO REGISTRY
+// ============================================
 int connect_to_registry(const char *hostname, const char *port) {
     struct addrinfo hints, *res, *p;
     int sockfd;
-    
-    /* Initialize hints structure to zero */
-    memset(&hints, 0, sizeof(hints));  // This memset is OK - it's initializing a struct
-    hints.ai_family = AF_INET;         // Use IPv4
-    hints.ai_socktype = SOCK_STREAM;   // TCP socket
 
-    /* Initialize hints structure */
+    memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
 
-    /* Resolve hostname */
     int status = getaddrinfo(hostname, port, &hints, &res);
     if (status != 0) {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
         return -1;
     }
 
-    /* Try each address until successful connection */
     for (p = res; p != NULL; p = p->ai_next) {
         sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
         if (sockfd < 0) {
@@ -124,7 +64,7 @@ int connect_to_registry(const char *hostname, const char *port) {
         }
 
         if (connect(sockfd, p->ai_addr, p->ai_addrlen) == 0) {
-            break; /* Success */
+            break;
         }
 
         close(sockfd);
@@ -140,173 +80,218 @@ int connect_to_registry(const char *hostname, const char *port) {
     return sockfd;
 }
 
-/**
- * Handle JOIN command
- * Sends JOIN request to registry
- */
-void handle_join(int sockfd, uint32_t peer_id) {
-    uint8_t buffer[5];
-    
-    /* Build JOIN message */
+// ============================================
+// SEND JOIN REQUEST
+// ============================================
+int send_join_request(int sockfd, uint32_t peer_id) {
+    uint8_t buffer[JOIN_MSG_SIZE];
     buffer[0] = ACTION_JOIN;
-    uint32_t peer_id_network = htonl(peer_id);
-    memcpy(&buffer[1], &peer_id_network, sizeof(peer_id_network));
+    uint32_t network_peer_id = htonl(peer_id);
+    memcpy(buffer + 1, &network_peer_id, sizeof(network_peer_id)); // FIXED: was net_peer_id
 
-    /* Send JOIN request in single send call */
-    ssize_t sent = send(sockfd, buffer, sizeof(buffer), 0);
-    if (sent < 0) {
-        perror("send failed");
-        return;
+    ssize_t bytes_sent = send(sockfd, buffer, sizeof(buffer), 0);
+    if (bytes_sent < 0) {
+        perror("send");
+        return -1;
     }
-
-    /* Handle partial send if needed */
-    if (sent < sizeof(buffer)) {
-        /* TODO: Handle partial send */
-    }
-
-    /* No response expected for JOIN */
+    printf("Sent JOIN request for peer ID %u\n", peer_id);
+    return 0;
 }
 
-/**
- * Handle PUBLISH command
- * Reads files from SharedFiles directory and sends to registry
- */
-void handle_publish(int sockfd) {
-    DIR *dir;
-    struct dirent *entry;
-    uint8_t buffer[MAX_PUBLISH_SIZE];
-    uint32_t file_count = 0;
-    size_t offset = 5; /* Skip action byte and count field initially */
-
-    /* Open SharedFiles directory */
-    dir = opendir("SharedFiles");
-    if (dir == NULL) {
-        perror("opendir failed");
-        return;
+// ============================================
+// SEND PUBLISH REQUEST
+// ============================================
+int send_publish_request(int sockfd) {
+    DIR *dir = opendir("SharedFiles"); // FIXED: was "shared", should be "SharedFiles"
+    if (dir == NULL) { // FIXED: added semicolon
+        perror("opendir");
+        return -1;
     }
 
-    /* Read directory and build file list */
+    // First pass: count files and calculate size
+    int file_count = 0;
+    size_t total_filename_length = 0;
+    struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
-        /* Skip directories */
-        if (entry->d_type == DT_DIR) {
-            continue;
+        if (entry->d_type == DT_REG) {
+            file_count++;
+            total_filename_length += strlen(entry->d_name) + 1; 
         }
+    }
+    
+    // Reset directory for second pass
+    rewinddir(dir);
+    
+    size_t message_size = 1 + 4 + total_filename_length;
+    uint8_t *buffer = malloc(message_size);
+    if (buffer == NULL) {
+        closedir(dir);
+        return -1; // FIXED: added semicolon
+    }
+    
+    buffer[0] = ACTION_PUBLISH;
+    uint32_t network_count = htonl(file_count); // FIXED: was unit32_t (typo)
+    memcpy(&buffer[1], &network_count, sizeof(network_count));
+    size_t offset = 5;
 
-        /* Check buffer space */
-        size_t filename_len = strlen(entry->d_name) + 1; /* +1 for NULL */
-        if (offset + filename_len > MAX_PUBLISH_SIZE) {
-            fprintf(stderr, "PUBLISH buffer full\n");
-            break;
+    // Second pass: copy filenames
+    while ((entry = readdir(dir)) != NULL) { // FIXED: was NUll (typo)
+        if (entry->d_type == DT_REG) {
+            char *filename = entry->d_name;
+            size_t len = strlen(filename) + 1;
+            memcpy(buffer + offset, filename, len);
+            offset += len;
         }
-
-        /* Copy filename with NULL terminator */
-        strcpy((char *)&buffer[offset], entry->d_name);
-        offset += filename_len;
-        file_count++;
     }
 
     closedir(dir);
 
-    /* Build PUBLISH message header */
-    buffer[0] = ACTION_PUBLISH;
-    uint32_t count_network = htonl(file_count);
-    memcpy(&buffer[1], &count_network, sizeof(count_network));
+    ssize_t bytes_sent = send(sockfd, buffer, message_size, 0);
 
-    /* Send PUBLISH request in single send call */
-    ssize_t sent = send(sockfd, buffer, offset, 0);
-    if (sent < 0) {
-        perror("send failed");
-        return;
+    if (bytes_sent < 0) {
+        perror("send");
+        free(buffer);
+        return -1;
+    } 
+
+    if ((size_t)bytes_sent != message_size) {
+        fprintf(stderr, "Partial send: %zd/%zu bytes\n", bytes_sent, message_size);
+        free(buffer);
+        return -1;
     }
 
-    /* Handle partial send if needed */
-    if ((size_t)sent < offset) {
-        /* TODO: Handle partial send */
-    }
-
-    /* No response expected for PUBLISH */
+    printf("Sent PUBLISH request with %d files\n", file_count);
+    free(buffer);
+    return 0;
 }
 
-/**
- * Handle SEARCH command
- * Prompts for filename, sends request, and prints response
- */
-void handle_search(int sockfd) {
-    char filename[MAX_FILENAME_LEN];
-    uint8_t send_buffer[1 + MAX_FILENAME_LEN];
-    uint8_t recv_buffer[10]; /* 4 + 4 + 2 bytes */
-
-    /* Prompt for filename */
+// ============================================
+// SEND SEARCH REQUEST
+// ============================================
+int send_search_request(int sockfd) {
+    char filename[100];
     printf("Enter a file name: ");
     fflush(stdout);
-
+    
     if (fgets(filename, sizeof(filename), stdin) == NULL) {
-        return;
+        return -1;
     }
-
-    /* Remove newline */
+    
     filename[strcspn(filename, "\n")] = '\0';
-
-    /* Build SEARCH request */
-    send_buffer[0] = ACTION_SEARCH;
-    strcpy((char *)&send_buffer[1], filename);
-    size_t msg_len = 1 + strlen(filename) + 1; /* action + filename + NULL */
-
-    /* Send SEARCH request */
-    ssize_t sent = send(sockfd, send_buffer, msg_len, 0);
+    
+    // Build SEARCH request
+    size_t msg_len = 1 + strlen(filename) + 1;
+    uint8_t *buffer = malloc(msg_len);
+    if (buffer == NULL) {
+        return -1;
+    }
+    
+    buffer[0] = ACTION_SEARCH;
+    strcpy((char *)&buffer[1], filename);
+    
+    // Send request
+    ssize_t sent = send(sockfd, buffer, msg_len, 0);
+    free(buffer);
+    
     if (sent < 0) {
-        perror("send failed");
-        return;
+        perror("send");
+        return -1;
     }
-
-    /* Receive SEARCH response */
-    ssize_t received = recv(sockfd, recv_buffer, sizeof(recv_buffer), 0);
+    
+    // Receive response
+    uint8_t recv_buffer[SEARCH_RESP_SIZE];
+    ssize_t received = recv(sockfd, recv_buffer, SEARCH_RESP_SIZE, 0);
+    
     if (received < 0) {
-        perror("recv failed");
-        return;
+        perror("recv");
+        return -1;
     }
-
-    if (received != 10) {
+    
+    if (received != SEARCH_RESP_SIZE) {
         fprintf(stderr, "Invalid response size: %zd\n", received);
-        return;
+        return -1;
     }
-
-    /* Parse response */
-    uint32_t peer_id_network, peer_ip_network;
-    uint16_t peer_port_network;
-
-    memcpy(&peer_id_network, &recv_buffer[0], 4);
-    memcpy(&peer_ip_network, &recv_buffer[4], 4);
-    memcpy(&peer_port_network, &recv_buffer[8], 2);
-
-    uint32_t peer_id = ntohl(peer_id_network);
-    uint16_t peer_port = ntohs(peer_port_network);
-
-    /* Check if file was found (all zeros means not found) */
-    if (peer_id == 0 && peer_ip_network == 0 && peer_port == 0) {
+    
+    // Parse response
+    uint32_t peer_id, peer_ip;
+    uint16_t peer_port;
+    
+    memcpy(&peer_id, &recv_buffer[0], 4);
+    memcpy(&peer_ip, &recv_buffer[4], 4);
+    memcpy(&peer_port, &recv_buffer[8], 2);
+    
+    peer_id = ntohl(peer_id);
+    peer_port = ntohs(peer_port);
+    
+    // Check if file found
+    if (peer_id == 0 && peer_ip == 0 && peer_port == 0) {
         printf("File not indexed by registry\n");
     } else {
-        /* Convert IP address to string */
         char ip_str[INET_ADDRSTRLEN];
         struct in_addr addr;
-        addr.s_addr = peer_ip_network;
+        addr.s_addr = peer_ip;
         
         if (inet_ntop(AF_INET, &addr, ip_str, INET_ADDRSTRLEN) == NULL) {
-            perror("inet_ntop failed");
-            return;
+            perror("inet_ntop");
+            return -1;
         }
-
-        /* Print result */
+        
         printf("File found at\n");
         printf("Peer %u\n", peer_id);
         printf("%s:%u\n", ip_str, peer_port);
     }
+    
+    return 0;
 }
 
-/**
- * Handle EXIT command
- * Closes socket and exits program
- */
-void handle_exit(int sockfd) {
+// ============================================
+// MAIN
+// ============================================
+int main(int argc, char *argv[]) {
+    if (argc != 4) {
+        fprintf(stderr, "Usage: %s <registry_host> <registry_port> <peer_id>\n", argv[0]);
+        return 1;
+    }
+
+    char *registry_host = argv[1];
+    char *registry_port = argv[2];
+    uint32_t peer_id = (uint32_t)atoi(argv[3]);
+
+    int sockfd = connect_to_registry(registry_host, registry_port); // FIXED: syntax
+    if (sockfd < 0) {
+        fprintf(stderr, "Failed to connect to server\n");
+        return 1; // FIXED: was retrrn (typo)
+    }
+
+    char command[100];
+    while (1) {
+        printf("Enter a command: ");
+        fflush(stdout);
+        
+        if (fgets(command, sizeof(command), stdin) == NULL) {
+            break;
+        }
+        
+        command[strcspn(command, "\n")] = '\0'; 
+
+        if (strcmp(command, "JOIN") == 0) { // Changed to strcmp for exact match
+            send_join_request(sockfd, peer_id);
+        }
+        else if (strcmp(command, "PUBLISH") == 0) {
+            send_publish_request(sockfd); // FIXED: removed peer_id parameter
+        }
+        else if (strcmp(command, "SEARCH") == 0) {
+            send_search_request(sockfd); // FIXED: removed peer_id parameter
+        }
+        else if (strcmp(command, "EXIT") == 0) {
+            printf("Exiting...\n");
+            break;
+        }
+        else {
+            fprintf(stderr, "Unknown command: %s\n", command);
+        }
+    }
+    
     close(sockfd);
+    return 0;
 }
