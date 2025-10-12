@@ -2,8 +2,7 @@
  * peer.c
  * EECE 446 - Program 2
  * Fall 2025
- * Alexander Liu
- * Elijah Coleman
+ * Alexander Liu and Elijah Coleman
  * P2P Peer Application
  */
 
@@ -168,7 +167,7 @@ int get_files_in_directory(char filenames[][MAX_FILENAME_LEN], int *count) {
     DIR *dir;
     struct dirent *entry;
     struct stat statbuf;
-    char filepath[256];
+    char filepath[512];
 
     dir = opendir("SharedFiles");
     if (dir == NULL) {
