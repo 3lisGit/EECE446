@@ -2,8 +2,8 @@
  * peer.c
  * EECE 446 - Program 2
  * Fall 2025
- * [Your Names Here]
- * 
+ * Alexander Liu
+ * Elijah Coleman
  * P2P Peer Application
  */
 
