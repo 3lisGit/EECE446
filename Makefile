@@ -1,11 +1,12 @@
 CC = gcc
 CFLAGS = -Wall -std=gnu99
 TARGET = peer
+SRCS = peer.c
 
 all: $(TARGET)
 
-$(TARGET): peer.c
-	$(CC) $(CFLAGS) -o $(TARGET) peer.c
+$(TARGET): $(SRCS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRCS)
 
 clean:
 	rm -f $(TARGET)
