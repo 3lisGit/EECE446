@@ -1,9 +1,10 @@
 /*
  * peer.c
- * EECE 446 - Program 2
+ * EECE 446 - Program 3
  * Fall 2025
- * Alexander Liu and Elijah Coleman
- * P2P Peer Application
+ * Alexander Liu & Elijah Coleman
+ * 
+ * P2P Peer Application with FETCH capability
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -29,6 +30,7 @@
 #define ACTION_JOIN 0
 #define ACTION_PUBLISH 1
 #define ACTION_SEARCH 2
+#define ACTION_FETCH 3
 
 // Global variables
 int sockfd = -1;
@@ -39,6 +41,7 @@ int connect_to_registry(const char *registry_host, const char *registry_port);
 int send_join(void);
 int send_publish(void);
 int send_search(const char *filename);
+int send_fetch(const char *filename);
 void handle_exit(void);
 int get_files_in_directory(char filenames[][MAX_FILENAME_LEN], int *count);
 
@@ -88,6 +91,17 @@ int main(int argc, char *argv[]) {
             if (send_search(filename) < 0) {
                 fprintf(stderr, "Failed to search\n");
             }
+        } else if (strcmp(command, "FETCH") == 0) {
+            char filename[MAX_FILENAME_LEN];
+            printf("Enter a file name: ");
+            if (fgets(filename, sizeof(filename), stdin) == NULL) {
+                break;
+            }
+            filename[strcspn(filename, "\n")] = 0;
+            
+            if (send_fetch(filename) < 0) {
+                fprintf(stderr, "Failed to fetch\n");
+            }
         } else if (strcmp(command, "EXIT") == 0) {
             handle_exit();
             break;
@@ -104,14 +118,9 @@ int connect_to_registry(const char *registry_host, const char *registry_port) {
     int status;
 
     // Initialize hints structure
+    memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = 0;
-    hints.ai_protocol = 0;
-    hints.ai_addrlen = 0;
-    hints.ai_addr = NULL;
-    hints.ai_canonname = NULL;
-    hints.ai_next = NULL;
 
     if ((status = getaddrinfo(registry_host, registry_port, &hints, &res)) != 0) {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
@@ -167,7 +176,7 @@ int get_files_in_directory(char filenames[][MAX_FILENAME_LEN], int *count) {
     DIR *dir;
     struct dirent *entry;
     struct stat statbuf;
-    char filepath[512];
+    char filepath[256];
 
     dir = opendir("SharedFiles");
     if (dir == NULL) {
@@ -295,6 +304,196 @@ int send_search(const char *filename) {
         printf("Peer %u\n", peer_id_resp);
         printf("%s:%u\n", ip_str, peer_port);
     }
+
+    return 0;
+}
+
+int send_fetch(const char *filename) {
+    // Step 1: Send SEARCH to registry to find which peer has the file
+    uint8_t search_buffer[MAX_BUFFER_SIZE];
+    int offset = 0;
+
+    search_buffer[offset++] = ACTION_SEARCH;
+    int len = strlen(filename);
+    memcpy(&search_buffer[offset], filename, len);
+    offset += len;
+    search_buffer[offset++] = '\0';
+
+    ssize_t sent = send(sockfd, search_buffer, offset, 0);
+    if (sent < 0) {
+        perror("send search in fetch");
+        return -1;
+    }
+    if (sent != offset) {
+        fprintf(stderr, "Partial send in SEARCH within FETCH\n");
+        return -1;
+    }
+
+    // Step 2: Receive SEARCH response from registry
+    uint8_t response[10];
+    ssize_t received = 0;
+    while (received < 10) {
+        ssize_t r = recv(sockfd, response + received, 10 - received, 0);
+        if (r < 0) {
+            perror("recv search response");
+            return -1;
+        }
+        if (r == 0) {
+            fprintf(stderr, "Connection closed by registry during FETCH\n");
+            return -1;
+        }
+        received += r;
+    }
+
+    // Step 3: Parse peer information
+    uint32_t peer_id_resp;
+    uint32_t peer_addr;
+    uint16_t peer_port;
+
+    memcpy(&peer_id_resp, &response[0], 4);
+    memcpy(&peer_addr, &response[4], 4);
+    memcpy(&peer_port, &response[8], 2);
+
+    peer_id_resp = ntohl(peer_id_resp);
+    peer_port = ntohs(peer_port);
+
+    // Check if file was found
+    if (peer_id_resp == 0 && peer_addr == 0 && peer_port == 0) {
+        printf("File not indexed by registry\n");
+        return -1;
+    }
+
+    // Step 4: Connect to the peer that has the file
+    char ip_str[INET_ADDRSTRLEN];
+    if (inet_ntop(AF_INET, &peer_addr, ip_str, INET_ADDRSTRLEN) == NULL) {
+        perror("inet_ntop");
+        return -1;
+    }
+
+    char port_str[6];
+    snprintf(port_str, sizeof(port_str), "%u", peer_port);
+
+    struct addrinfo hints, *res, *p;
+    int status;
+    int peer_sockfd = -1;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if ((status = getaddrinfo(ip_str, port_str, &hints, &res)) != 0) {
+        fprintf(stderr, "getaddrinfo error for peer: %s\n", gai_strerror(status));
+        return -1;
+    }
+
+    // Connect to peer
+    for (p = res; p != NULL; p = p->ai_next) {
+        peer_sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (peer_sockfd == -1) {
+            continue;
+        }
+
+        if (connect(peer_sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+            close(peer_sockfd);
+            peer_sockfd = -1;
+            continue;
+        }
+
+        break;
+    }
+
+    freeaddrinfo(res);
+
+    if (peer_sockfd == -1) {
+        fprintf(stderr, "Failed to connect to peer\n");
+        return -1;
+    }
+
+    // Step 5: Send FETCH request to peer
+    uint8_t fetch_buffer[MAX_BUFFER_SIZE];
+    offset = 0;
+
+    fetch_buffer[offset++] = ACTION_FETCH;
+    len = strlen(filename);
+    memcpy(&fetch_buffer[offset], filename, len);
+    offset += len;
+    fetch_buffer[offset++] = '\0';
+
+    sent = send(peer_sockfd, fetch_buffer, offset, 0);
+    if (sent < 0) {
+        perror("send fetch request");
+        close(peer_sockfd);
+        return -1;
+    }
+    if (sent != offset) {
+        fprintf(stderr, "Partial send in FETCH request\n");
+        close(peer_sockfd);
+        return -1;
+    }
+
+    // Step 6: Receive FETCH response (1 byte response code)
+    uint8_t response_code;
+    ssize_t r = recv(peer_sockfd, &response_code, 1, 0);
+    if (r < 0) {
+        perror("recv fetch response code");
+        close(peer_sockfd);
+        return -1;
+    }
+    if (r == 0) {
+        fprintf(stderr, "Peer closed connection before sending response\n");
+        close(peer_sockfd);
+        return -1;
+    }
+
+    // Check response code
+    if (response_code != 0) {
+        fprintf(stderr, "Peer returned error code: %u\n", response_code);
+        close(peer_sockfd);
+        return -1;
+    }
+
+    // Step 7: Open file for writing
+    FILE *file = fopen(filename, "wb");
+    if (file == NULL) {
+        perror("fopen");
+        close(peer_sockfd);
+        return -1;
+    }
+
+    // Step 8: Receive file data until peer closes connection
+    uint8_t file_buffer[4096];
+    size_t total_bytes = 0;
+
+    while (1) {
+        r = recv(peer_sockfd, file_buffer, sizeof(file_buffer), 0);
+        if (r < 0) {
+            perror("recv file data");
+            fclose(file);
+            close(peer_sockfd);
+            return -1;
+        }
+        if (r == 0) {
+            // Peer closed connection - file transfer complete
+            break;
+        }
+
+        // Write received data to file
+        size_t written = fwrite(file_buffer, 1, r, file);
+        if (written != (size_t)r) {
+            fprintf(stderr, "Failed to write all data to file\n");
+            fclose(file);
+            close(peer_sockfd);
+            return -1;
+        }
+
+        total_bytes += written;
+    }
+
+    // Step 9: Clean up
+    fclose(file);
+    close(peer_sockfd);
+
+    printf("File downloaded successfully (%zu bytes)\n", total_bytes);
 
     return 0;
 }
