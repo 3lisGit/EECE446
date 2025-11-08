@@ -5,6 +5,7 @@
  * Alexander Liu, Elijah Coleman
  * 
  * P2P Peer Application with FETCH capability
+ * Project Bin : /user/home/kkredo/public_bin/
  */
 
 #define _POSIX_C_SOURCE 200809L
