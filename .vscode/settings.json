@@ -1,6 +1,7 @@
 {
     "files.associations": {
         "dirent.h": "c",
-        "stat.h": "c"
+        "stat.h": "c",
+        "errno.h": "c"
     }
 }
