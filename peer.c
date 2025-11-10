@@ -3,6 +3,7 @@
  * EECE 446 - Program 3
  * Fall 2025
  * Alexander Liu and Elijah Coleman
+ * P2P Peer Application with File Download
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -44,7 +45,7 @@ int send_fetch(const char *filename);
 void handle_exit(void);
 int get_files_in_directory(char filenames[][MAX_FILENAME_LEN], int *count);
 int connect_to_peer(uint32_t peer_addr, uint16_t peer_port);
-int fetch_file_from_peer(int peer_sockfd, const char *filename);
+int fetch_file_from_peer(int peer_sockfd, const char *filename, size_t *bytes_received_out);
 
 int main(int argc, char *argv[]) {
     if (argc != 4) {
@@ -348,7 +349,7 @@ int connect_to_peer(uint32_t peer_addr, uint16_t peer_port) {
     return peer_sockfd;
 }
 
-int fetch_file_from_peer(int peer_sockfd, const char *filename) {
+int fetch_file_from_peer(int peer_sockfd, const char *filename, size_t *bytes_received_out) {
     // Build FETCH request
     uint8_t request[MAX_BUFFER_SIZE];
     int offset = 0;
@@ -398,7 +399,7 @@ int fetch_file_from_peer(int peer_sockfd, const char *filename) {
 
     // Receive file data
     uint8_t buffer[FETCH_BUFFER_SIZE];
-    ssize_t total_received = 0;
+    size_t total_received = 0;
     
     while (1) {
         r = recv(peer_sockfd, buffer, FETCH_BUFFER_SIZE, 0);
@@ -424,6 +425,12 @@ int fetch_file_from_peer(int peer_sockfd, const char *filename) {
     }
 
     fclose(file);
+    
+    // Store the total bytes received
+    if (bytes_received_out) {
+        *bytes_received_out = total_received;
+    }
+
     return 0;
 }
 
@@ -450,7 +457,8 @@ int send_fetch(const char *filename) {
     }
 
     // Fetch the file
-    if (fetch_file_from_peer(peer_sockfd, filename) < 0) {
+    size_t bytes_received = 0;
+    if (fetch_file_from_peer(peer_sockfd, filename, &bytes_received) < 0) {
         fprintf(stderr, "Failed to fetch file from peer\n");
         close(peer_sockfd);
         return -1;
@@ -458,6 +466,9 @@ int send_fetch(const char *filename) {
 
     // Close peer connection
     close(peer_sockfd);
+
+    // Print success message with file size
+    printf("File '%s' successfully downloaded (%zu bytes)\n", filename, bytes_received);
 
     return 0;
 }
