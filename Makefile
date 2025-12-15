@@ -1,25 +1,30 @@
+# EECE 446 Program 4 - P2P Registry Makefile
+# Authors: Alexander Liu, Elijah Coleman
+
 CC = gcc
-CFLAGS = -Wall -std=c99 -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE
-TARGET = peer
+CFLAGS = -Wall -g
+DEBUG_FLAGS = -DDEBUG
+TARGET = registry
+SRCS = registry.c
+OBJS = $(SRCS:.c=.o)
 
-
-SOURCES = peer.c
-OBJECTS = $(SOURCES:.c=.o)
-
-
+# Default target: build the registry
 all: $(TARGET)
 
+# Build the registry executable
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS)
 
-$(TARGET): $(OBJECTS)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJECTS)
-
-
+# Compile source files to object files
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Debug build with extra output
+debug: CFLAGS += $(DEBUG_FLAGS)
+debug: clean $(TARGET)
 
+# Clean up generated files
 clean:
-	rm -f $(TARGET) $(OBJECTS)
+	rm -f $(TARGET) $(OBJS)
 
-
-.PHONY: all clean
+.PHONY: all clean debug
